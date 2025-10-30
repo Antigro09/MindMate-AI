@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Heart, Plus } from '@phosphor-icons/react'
 import { AppView, MoodEntry } from '@/lib/types'
-import { useKV } from '@github/spark/hooks'
 import { toast } from 'sonner'
+import { usePersistentState } from '@/hooks/usePersistentState'
 
 interface MoodTrackerProps {
   onNavigate: (view: AppView) => void
@@ -22,7 +22,7 @@ const MOODS = [
 ] as const
 
 export function MoodTracker({ onNavigate }: MoodTrackerProps) {
-  const [moodEntries, setMoodEntries] = useKV<MoodEntry[]>('mood-entries', [])
+  const [moodEntries, setMoodEntries] = usePersistentState<MoodEntry[]>('mood-entries', [])
   const [selectedMood, setSelectedMood] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [showHistory, setShowHistory] = useState(false)
@@ -41,7 +41,7 @@ export function MoodTracker({ onNavigate }: MoodTrackerProps) {
       createdAt: Date.now()
     }
 
-    setMoodEntries(current => [newEntry, ...(current || [])])
+    setMoodEntries(current => [newEntry, ...current])
     setSelectedMood(null)
     setNotes('')
     toast.success('Mood logged successfully!')

@@ -4,17 +4,17 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, PaperPlaneTilt, Sparkle, BookOpen } from '@phosphor-icons/react'
 import { AppView, JournalEntry } from '@/lib/types'
-import { useKV } from '@github/spark/hooks'
 import { detectCrisisIndicators } from '@/lib/crisis-detection'
 import { CrisisResourcesAlert } from './CrisisResourcesAlert'
 import { toast } from 'sonner'
+import { usePersistentState } from '@/hooks/usePersistentState'
 
 interface JournalProps {
   onNavigate: (view: AppView) => void
 }
 
 export function Journal({ onNavigate }: JournalProps) {
-  const [entries, setEntries] = useKV<JournalEntry[]>('journal-entries', [])
+  const [entries, setEntries] = usePersistentState<JournalEntry[]>('journal-entries', [])
   const [currentEntry, setCurrentEntry] = useState('')
   const [isGeneratingResponse, setIsGeneratingResponse] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
@@ -85,7 +85,7 @@ Do NOT list crisis resources - those will be shown separately.`
         createdAt: Date.now()
       }
 
-      setEntries(current => [newEntry, ...(current || [])])
+      setEntries(current => [newEntry, ...current])
       setCurrentEntry('')
       
       if (crisisDetection.isDetected) {
