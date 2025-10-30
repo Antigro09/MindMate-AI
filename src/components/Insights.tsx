@@ -1,18 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ChartBar, Sparkle, TrendUp, Calendar, Heart } from '@phosphor-icons/react'
 import { AppView, JournalEntry, MoodEntry, Insight } from '@/lib/types'
-import { useKV } from '@github/spark/hooks'
+import { usePersistentState } from '@/hooks/usePersistentState'
 
 interface InsightsProps {
   onNavigate: (view: AppView) => void
 }
 
 export function Insights({ onNavigate }: InsightsProps) {
-  const [journalEntries] = useKV<JournalEntry[]>('journal-entries', [])
-  const [moodEntries] = useKV<MoodEntry[]>('mood-entries', [])
-  const [insights, setInsights] = useKV<Insight[]>('generated-insights', [])
+  const [journalEntries] = usePersistentState<JournalEntry[]>('journal-entries', [])
+  const [moodEntries] = usePersistentState<MoodEntry[]>('mood-entries', [])
+  const [insights, setInsights] = usePersistentState<Insight[]>('generated-insights', [])
   const [isGenerating, setIsGenerating] = useState(false)
 
   const generateInsights = async () => {

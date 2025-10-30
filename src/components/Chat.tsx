@@ -1,52 +1,54 @@
 import { useState, useEffect, useRef } from 'react'
-import { useKV } from '@github/spark/hooks'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ArrowLeft, PaperPlaneRight, Heart, Warning, Phone, ChatCircle } from '@phosphor-icons/react'
-import { ChatMessage, AppView } from '@/lib/types'
-import { detectCrisisIndicators, formatCrisisResources } from '@/lib/crisis-detection'
+import { ArrowLeft, PaperPlaneRight, Heart, Warning, Phone, Trash } from '@phosphor-icons/react'
+import { ChatMessage, AppView, CrisisDetection } from '@/lib/types'
+import { detectCrisisIndicators } from '@/lib/crisis-detection'
 import { CrisisResourcesAlert } from './CrisisResourcesAlert'
 import { toast } from 'sonner'
+import { usePersistentState } from '@/hooks/usePersistentState'
 
 interface ChatProps {
   onNavigate: (view: AppView) => void
 }
 
 export function Chat({ onNavigate }: ChatProps) {
-  const [messages, setMessages] = useKV<ChatMessage[]>('chat-messages', [])
+  const [messages, setMessages] = usePersistentState<ChatMessage[]>('chat-messages', [])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [activeCrisis, setActiveCrisis] = useState<CrisisDetection | null>(null)
+  const [showConfirmClear, setShowConfirmClear] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-      if (scrollViewport) {
-        scrollViewport.scrollTop = scrollViewport.scrollHeight
+  const generateLLMResponse = async (prompt: string, models: string[] = ['gpt-4o', 'gpt-4o-mini']) => {
+    let lastError: unknown = null
+    for (const model of models) {
+      try {
+        return await window.spark.llm(prompt, model)
+      } catch (error) {
+        lastError = error
+        console.error(`LLM call failed for ${model}:`, error)
       }
     }
-  }, [messages])
+    throw lastError ?? new Error('All LLM calls failed')
+  }
 
-  // Focus input on mount
-  useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.focus()
-    }
-  }, [])
+  const fallbackEmpathy =
+    "Thank you for sharing that with me. I'm still here with you, even while I'm having connection trouble, and your feelings truly matter."
+  const fallbackCrisis =
+    "I'm really glad you told me. This sounds very heavy, and I want you to have support right away. Please reach out to someone you trust or a crisis professional as soon as possible."
 
   const generateEmpathicResponse = async (userMessage: string): Promise<string> => {
-    const recentMessages = (messages || []).slice(-6) // Get last 6 messages for context
+    const recentMessages = messages.slice(-6)
     const conversationContext = recentMessages
       .map(msg => `${msg.isUser ? 'User' : 'AI'}: ${msg.content}`)
       .join('\n')
 
-    try {
-      const prompt = `You are MindMate, a compassionate AI companion specialized in mental health support. You provide empathetic, non-judgmental responses that validate feelings and offer gentle guidance. 
+    const prompt = `You are MindMate, a compassionate AI companion specialized in mental health support. You provide empathetic, non-judgmental responses that validate feelings and offer gentle guidance. 
 
 Key principles:
 - Always validate the user's feelings first
@@ -65,11 +67,11 @@ User's latest message: ${userMessage}
 
 Respond with genuine empathy and support. If this is the first message or seems like a greeting, warmly welcome them and ask how they're feeling today.`
 
-      const response = await window.spark.llm(prompt, 'gpt-4o')
-      return response
+    try {
+      return await generateLLMResponse(prompt)
     } catch (error) {
-      console.error('Error generating AI response:', error)
-      return "I'm here for you, even though I'm having trouble connecting right now. Would you like to try sharing again in a moment?"
+      toast.error('Connection issue. Showing offline support.')
+      return fallbackEmpathy
     }
   }
 
@@ -83,19 +85,19 @@ Respond with genuine empathy and support. If this is the first message or seems 
       timestamp: Date.now()
     }
 
-    // Check for crisis indicators before processing
     const crisisDetection = await detectCrisisIndicators(userMessage.content)
     userMessage.crisisAlert = crisisDetection.isDetected
+    if (crisisDetection.isDetected) {
+      setActiveCrisis(crisisDetection)
+    }
 
-    // Add user message immediately
-    setMessages(current => [...(current || []), userMessage])
+    setMessages(current => [...current, userMessage])
     setInputValue('')
     setIsLoading(true)
 
     try {
       let aiResponseContent: string
 
-      // If crisis detected, provide crisis-aware response
       if (crisisDetection.isDetected) {
         const crisisPrompt = `You are MindMate, a compassionate AI companion. The user has shared something that indicates they may be in crisis (risk level: ${crisisDetection.riskLevel}). 
 
@@ -110,33 +112,25 @@ User's message: ${userMessage.content}
 
 Important: Do NOT list specific crisis resources in your response - those will be shown separately. Focus on emotional support and gentle encouragement to seek help.`
 
-        aiResponseContent = await window.spark.llm(crisisPrompt, 'gpt-4o')
-        
-        // Add crisis resources as a separate system message
-        const crisisResourcesMessage: ChatMessage = {
-          id: `crisis-${Date.now()}`,
-          content: `${crisisDetection.supportMessage}
-
-**Immediate Support Resources:**
-
-${formatCrisisResources(crisisDetection.recommendedResources)}
-
-Please don't hesitate to reach out to any of these resources. You deserve support and care.`,
-          isUser: false,
-          timestamp: Date.now() + 1,
-          crisisAlert: true
+        try {
+          aiResponseContent = await generateLLMResponse(crisisPrompt)
+        } catch (error) {
+          console.error('Crisis response generation failed:', error)
+          aiResponseContent = fallbackCrisis
         }
 
-        setMessages(current => [...(current || []), {
-          id: `ai-${Date.now()}`,
-          content: aiResponseContent,
-          isUser: false,
-          timestamp: Date.now()
-        }, crisisResourcesMessage])
+        setMessages(current => [
+          ...current,
+          {
+            id: `ai-${Date.now()}`,
+            content: aiResponseContent,
+            isUser: false,
+            timestamp: Date.now()
+          }
+        ])
       } else {
-        // Generate normal empathic response
         aiResponseContent = await generateEmpathicResponse(userMessage.content)
-        
+
         const aiMessage: ChatMessage = {
           id: `ai-${Date.now()}`,
           content: aiResponseContent,
@@ -144,7 +138,7 @@ Please don't hesitate to reach out to any of these resources. You deserve suppor
           timestamp: Date.now()
         }
 
-        setMessages(current => [...(current || []), aiMessage])
+        setMessages(current => [...current, aiMessage])
       }
     } catch (error) {
       toast.error('Unable to generate response. Please try again.')
@@ -159,6 +153,13 @@ Please don't hesitate to reach out to any of these resources. You deserve suppor
       e.preventDefault()
       handleSendMessage()
     }
+  }
+
+  const handleClearMessages = () => {
+    setMessages([])
+    setActiveCrisis(null)
+    setShowConfirmClear(false)
+    toast.success('Chat history cleared')
   }
 
   const formatTime = (timestamp: number) => {
@@ -184,13 +185,54 @@ Please don't hesitate to reach out to any of these resources. You deserve suppor
           <Heart className="text-accent" size={24} />
           <h1 className="text-2xl font-semibold text-foreground">AI Companion</h1>
         </div>
+        <div className="ml-auto flex items-center gap-2">
+          {!showConfirmClear ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowConfirmClear(true)}
+              className="gap-2"
+            >
+              <Trash size={16} />
+              Clear Chat
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Delete all messages?</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowConfirmClear(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleClearMessages}
+              >
+                Confirm
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Chat Container */}
       <div className="max-w-2xl mx-auto">
         <Card className="h-[600px] flex flex-col">
+          {/* Crisis Resources Alert */}
+          {activeCrisis && (
+            <div className="p-4 border-b">
+              <CrisisResourcesAlert
+                crisisDetection={activeCrisis}
+                onDismiss={() => setActiveCrisis(null)}
+              />
+            </div>
+          )}
+
           {/* Welcome Message */}
-          {(!messages || messages.length === 0) && (
+          {messages.length === 0 && (
             <div className="p-6 text-center text-muted-foreground border-b">
               <Heart className="mx-auto mb-3 text-accent" size={32} />
               <h3 className="font-medium mb-2">Welcome to your AI Companion</h3>
@@ -205,7 +247,7 @@ Please don't hesitate to reach out to any of these resources. You deserve suppor
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
               <div className="space-y-4">
-                {(messages || []).map((message) => (
+                {messages.map((message) => (
                 <div key={message.id}>
                   {/* Crisis Alert for user messages */}
                   {message.isUser && message.crisisAlert && (
