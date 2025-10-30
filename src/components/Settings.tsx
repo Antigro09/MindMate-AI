@@ -3,35 +3,33 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ArrowLeft, Gear, Download, Upload, Trash, Shield } from '@phosphor-icons/react'
-import { AppView, UserSettings } from '@/lib/types'
-import { useKV } from '@github/spark/hooks'
+import { AppView, UserSettings, JournalEntry, MoodEntry } from '@/lib/types'
 import { toast } from 'sonner'
 import { CrisisTestDialog } from './CrisisTestDialog'
+import { usePersistentState } from '@/hooks/usePersistentState'
 
 interface SettingsProps {
   onNavigate: (view: AppView) => void
 }
 
+const defaultSettings: UserSettings = {
+  darkMode: false,
+  notifications: true,
+  dataRetention: 365,
+  aiResponses: true,
+}
+
 export function Settings({ onNavigate }: SettingsProps) {
-  const [settings, setSettings] = useKV<UserSettings>('user-settings', {
-    darkMode: false,
-    notifications: true,
-    dataRetention: 365,
-    aiResponses: true
-  })
-  
-  const [journalEntries] = useKV<any[]>('journal-entries', [])
-  const [moodEntries] = useKV<any[]>('mood-entries', [])
+  const [settings, setSettings] = usePersistentState<UserSettings>('user-settings', defaultSettings)
+  const [journalEntries, setJournalEntries] = usePersistentState<JournalEntry[]>('journal-entries', [])
+  const [moodEntries, setMoodEntries] = usePersistentState<MoodEntry[]>('mood-entries', [])
   const [showConfirmReset, setShowConfirmReset] = useState(false)
 
   const updateSetting = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
-    setSettings(current => ({ 
-      darkMode: false,
-      notifications: true,
-      dataRetention: 365,
-      aiResponses: true,
-      ...(current || {}), 
-      [key]: value 
+    setSettings(current => ({
+      ...defaultSettings,
+      ...(current || {}),
+      [key]: value,
     }))
     toast.success('Setting updated')
   }
@@ -67,22 +65,22 @@ export function Settings({ onNavigate }: SettingsProps) {
       if (!file) return
 
       const reader = new FileReader()
-      reader.onload = async (e) => {
+      reader.onload = (e) => {
         try {
           const data = JSON.parse(e.target?.result as string)
-          
+
           if (data.journalEntries) {
-            await window.spark.kv.set('journal-entries', data.journalEntries)
+            setJournalEntries(data.journalEntries)
           }
           if (data.moodEntries) {
-            await window.spark.kv.set('mood-entries', data.moodEntries)
+            setMoodEntries(data.moodEntries)
           }
           if (data.settings) {
-            await window.spark.kv.set('user-settings', data.settings)
+            setSettings({ ...defaultSettings, ...data.settings })
           }
-          
-          toast.success('Data imported successfully. Please refresh the app.')
-        } catch (error) {
+
+          toast.success('Data imported successfully.')
+        } catch {
           toast.error('Failed to import data. Please check the file format.')
         }
       }
@@ -91,18 +89,12 @@ export function Settings({ onNavigate }: SettingsProps) {
     input.click()
   }
 
-  const resetAllData = async () => {
-    try {
-      await window.spark.kv.delete('journal-entries')
-      await window.spark.kv.delete('mood-entries')
-      await window.spark.kv.delete('generated-insights')
-      await window.spark.kv.delete('completed-exercises')
-      
-      setShowConfirmReset(false)
-      toast.success('All data has been reset')
-    } catch (error) {
-      toast.error('Failed to reset data')
-    }
+  const resetAllData = () => {
+    setJournalEntries([])
+    setMoodEntries([])
+    setSettings(defaultSettings)
+    setShowConfirmReset(false)
+    toast.success('All data has been reset')
   }
 
   const getTotalEntries = () => {
